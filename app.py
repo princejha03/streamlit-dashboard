@@ -547,17 +547,26 @@ if uploaded_file is not None:
             with cols[0]:
                 col = st.selectbox("Column", options=[None] + df_dash.columns.tolist(), key=f"fcol_{idx_f}")
             with cols[1]:
-                op = st.selectbox("Op", options=['==','!=','in','not in','>','>=','<','<='], index=0, key=f"fop_{idx_f}")
+                op = st.selectbox("Op", options=['==','!=','in','not in','>','>=','<','<=','between'], index=0, key=f"fop_{idx_f}")
             with cols[2]:
                 val_widget = None
                 if col is not None:
                     if pd.api.types.is_numeric_dtype(df_dash[col]):
+                        col_vals = pd.to_numeric(df_dash[col], errors='coerce')
+                        valid_vals = col_vals.dropna()
                         if op in ['in','not in']:
-                            unique_vals = sorted(df_dash[col].dropna().unique().tolist())[:2000]
+                            unique_vals = sorted(valid_vals.unique().tolist())[:2000]
                             val_widget = st.multiselect("Values", options=unique_vals, key=f"fvals_{idx_f}")
+                        elif op == 'between':
+                            if valid_vals.shape[0] > 0 and np.isfinite(valid_vals.min()) and np.isfinite(valid_vals.max()):
+                                lo = float(valid_vals.min())
+                                hi = float(valid_vals.max())
+                                val_widget = st.slider("Range", lo, hi, value=(lo, hi), key=f"frng_{idx_f}")
+                            else:
+                                val_widget = None
                         else:
-                            rng = st.slider("Value", float(np.nanmin(pd.to_numeric(df_dash[col], errors='coerce'))), float(np.nanmax(pd.to_numeric(df_dash[col], errors='coerce'))), value=(float(np.nanmin(pd.to_numeric(df_dash[col], errors='coerce'))), float(np.nanmax(pd.to_numeric(df_dash[col], errors='coerce')))), key=f"frng_{idx_f}")
-                            val_widget = rng
+                            default_val = float(valid_vals.median()) if valid_vals.shape[0] > 0 else 0.0
+                            val_widget = st.number_input("Value", value=default_val, key=f"fnum_{idx_f}")
                     else:
                         unique_vals = sorted(df_dash[col].astype(str).dropna().unique().tolist())[:2000]
                         if op in ['in','not in']:
@@ -582,20 +591,47 @@ if uploaded_file is not None:
                 val = f.get('values')
                 if not col:
                     continue
-                if op == '==':
-                    dff = dff[dff[col].astype(str) == str(val)]
-                elif op == '!=':
-                    dff = dff[dff[col].astype(str) != str(val)]
-                elif op == 'in' and isinstance(val, list):
-                    dff = dff[dff[col].isin(val)]
-                elif op == 'not in' and isinstance(val, list):
-                    dff = dff[~dff[col].isin(val)]
-                elif op in ['>','>=','<','<='] and isinstance(val, tuple):
-                    lo, hi = val
-                    if op in ['>','>=']:
-                        dff = dff[dff[col] >= lo] if op == '>=' else dff[dff[col] > lo]
-                    if op in ['<','<=']:
-                        dff = dff[dff[col] <= hi] if op == '<=' else dff[dff[col] < hi]
+                try:
+                    if pd.api.types.is_numeric_dtype(df_dash[col]):
+                        col_num = pd.to_numeric(dff[col], errors='coerce')
+                        if op == '==':
+                            if val is not None:
+                                dff = dff[col_num == float(val)]
+                        elif op == '!=':
+                            if val is not None:
+                                dff = dff[col_num != float(val)]
+                        elif op in ['>','>=','<','<='] and val is not None:
+                            v = float(val)
+                            if op == '>':
+                                dff = dff[col_num > v]
+                            elif op == '>=':
+                                dff = dff[col_num >= v]
+                            elif op == '<':
+                                dff = dff[col_num < v]
+                            elif op == '<=':
+                                dff = dff[col_num <= v]
+                        elif op in ['in','not in'] and isinstance(val, list):
+                            try:
+                                vals_num = [float(x) for x in val]
+                            except Exception:
+                                vals_num = []
+                            mask = col_num.isin(vals_num)
+                            dff = dff[~mask] if op == 'not in' else dff[mask]
+                        elif op == 'between' and isinstance(val, tuple):
+                            lo, hi = val
+                            mask = col_num.between(float(lo), float(hi), inclusive='both')
+                            dff = dff[mask]
+                    else:
+                        if op == '==':
+                            dff = dff[dff[col].astype(str) == str(val)]
+                        elif op == '!=':
+                            dff = dff[dff[col].astype(str) != str(val)]
+                        elif op == 'in' and isinstance(val, list):
+                            dff = dff[dff[col].isin(val)]
+                        elif op == 'not in' and isinstance(val, list):
+                            dff = dff[~dff[col].isin(val)]
+                except Exception:
+                    pass
         except Exception:
             st.info("Some filters could not be applied due to data types.")
 
